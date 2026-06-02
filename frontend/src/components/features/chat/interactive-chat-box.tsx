@@ -2,6 +2,8 @@ import { isFileImage } from "#/utils/is-file-image";
 import { displayErrorToast } from "#/utils/custom-toast-handlers";
 import { validateFiles } from "#/utils/file-validation";
 import { CustomChatInput } from "./custom-chat-input";
+import { useBtwInterceptor } from "#/hooks/chat/use-btw-interceptor";
+import { useModelInterceptor } from "#/hooks/chat/use-model-interceptor";
 import { AgentState } from "#/types/agent-state";
 import { useActiveConversation } from "#/hooks/query/use-active-conversation";
 import { GitControlBar } from "./git-control-bar";
@@ -13,9 +15,13 @@ import { isTaskPolling } from "#/utils/utils";
 
 interface InteractiveChatBoxProps {
   onSubmit: (message: string, images: File[], files: File[]) => void;
+  disabled?: boolean;
 }
 
-export function InteractiveChatBox({ onSubmit }: InteractiveChatBoxProps) {
+export function InteractiveChatBox({
+  onSubmit,
+  disabled = false,
+}: InteractiveChatBoxProps) {
   const {
     images,
     files,
@@ -35,7 +41,7 @@ export function InteractiveChatBox({ onSubmit }: InteractiveChatBoxProps) {
   const { taskStatus: subConversationTaskStatus } =
     useSubConversationTaskPolling(
       subConversationTaskId,
-      conversation?.conversation_id || null,
+      conversation?.id || null,
     );
 
   // Helper function to validate and filter files
@@ -133,10 +139,13 @@ export function InteractiveChatBox({ onSubmit }: InteractiveChatBoxProps) {
     }
   };
 
-  const handleSubmit = (message: string) => {
+  const conversationId = conversation?.id ?? null;
+  const submitWithFiles = (message: string) => {
     onSubmit(message, images, files);
     clearAllFiles();
   };
+  const handleAfterModel = useBtwInterceptor(conversationId, submitWithFiles);
+  const handleSubmit = useModelInterceptor(conversationId, handleAfterModel);
 
   const handleSuggestionsClick = (suggestion: string) => {
     handleSubmit(suggestion);
@@ -145,6 +154,7 @@ export function InteractiveChatBox({ onSubmit }: InteractiveChatBoxProps) {
   // Allow users to submit messages during LOADING state - they will be
   // queued server-side and delivered when the conversation becomes ready
   const isDisabled =
+    disabled ||
     curAgentState === AgentState.AWAITING_USER_CONFIRMATION ||
     isTaskPolling(subConversationTaskStatus);
 
@@ -152,9 +162,10 @@ export function InteractiveChatBox({ onSubmit }: InteractiveChatBoxProps) {
     <div data-testid="interactive-chat-box">
       <CustomChatInput
         disabled={isDisabled}
+        isNewConversationPending={disabled}
         onSubmit={handleSubmit}
         onFilesPaste={handleUpload}
-        conversationStatus={conversation?.status || null}
+        sandboxStatus={conversation?.sandbox_status || null}
       />
       <div className="mt-4">
         <GitControlBar onSuggestionsClick={handleSuggestionsClick} />

@@ -1,5 +1,5 @@
 import logging
-from typing import Any
+from typing import Any, ClassVar
 from uuid import UUID
 
 import httpx
@@ -11,6 +11,7 @@ from openhands.agent_server.models import AskAgentRequest, AskAgentResponse
 from openhands.app_server.event_callback.event_callback_models import (
     EventCallback,
     EventCallbackProcessor,
+    EventKind,
 )
 from openhands.app_server.event_callback.event_callback_result_models import (
     EventCallbackResult,
@@ -30,6 +31,8 @@ _logger = logging.getLogger(__name__)
 class GitlabV1CallbackProcessor(EventCallbackProcessor):
     """Callback processor for GitLab V1 integrations."""
 
+    event_kind: ClassVar[EventKind] = 'ConversationStateUpdateEvent'
+
     gitlab_view_data: dict[str, Any] = Field(default_factory=dict)
     should_request_summary: bool = Field(default=True)
     inline_mr_comment: bool = Field(default=False)
@@ -41,15 +44,20 @@ class GitlabV1CallbackProcessor(EventCallbackProcessor):
         event: Event,
     ) -> EventCallbackResult | None:
         """Process events for GitLab V1 integration."""
-        # Only handle ConversationStateUpdateEvent
+        # Only handle ConversationStateUpdateEvent for execution_status
         if not isinstance(event, ConversationStateUpdateEvent):
             return None
 
-        # Only act when execution has finished
-        if not (event.key == 'execution_status' and event.value == 'finished'):
+        if event.key != 'execution_status':
             return None
 
+        # Log ALL terminal states for monitoring (finished, error, stuck)
         _logger.info('[GitLab V1] Callback agent state was %s', event)
+
+        # Only request summary when execution has finished successfully
+        if event.value != 'finished':
+            return None
+
         _logger.info(
             '[GitLab V1] Should request summary: %s', self.should_request_summary
         )

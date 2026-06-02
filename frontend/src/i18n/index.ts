@@ -16,6 +16,7 @@ export const AvailableLanguages = [
   { label: "Italiano", value: "it" },
   { label: "Português", value: "pt" },
   { label: "Español", value: "es" },
+  { label: "Català", value: "ca" },
   { label: "Türkçe", value: "tr" },
   { label: "Українська", value: "uk" },
 ];
@@ -36,6 +37,17 @@ i18n
     // Do NOT set nonExplicitSupportedLngs: true as it causes 404 errors
     // for region-specific codes not in supportedLngs (per i18next developer)
     nonExplicitSupportedLngs: false,
+
+    interpolation: {
+      // React already escapes text content before rendering, so i18next's
+      // default ``escapeValue: true`` produces double-escaped output —
+      // an interpolated path like ``/tmp/foo`` surfaces as
+      // ``&#x2F;tmp&#x2F;foo`` in the rendered DOM because React's text
+      // pipeline doesn't decode entities back. Disable here; React's
+      // renderer is the proper safety boundary against XSS in interpolated
+      // strings. See: https://www.i18next.com/translation-function/interpolation
+      escapeValue: false,
+    },
   });
 
 export default i18n;

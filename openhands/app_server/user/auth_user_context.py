@@ -1,23 +1,27 @@
+import logging
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, AsyncGenerator
 
 from fastapi import Request
-from pydantic import PrivateAttr
+from pydantic import PrivateAttr, SecretStr
 
 from openhands.app_server.errors import AuthError
-from openhands.app_server.services.injector import InjectorState
-from openhands.app_server.user.specifiy_user_context import USER_CONTEXT_ATTR
-from openhands.app_server.user.user_context import UserContext, UserContextInjector
-from openhands.app_server.user.user_models import UserInfo
-from openhands.integrations.provider import (
+from openhands.app_server.integrations.provider import (
     PROVIDER_TOKEN_TYPE,
     ProviderHandler,
     ProviderType,
 )
+from openhands.app_server.integrations.service_types import UserGitInfo
+from openhands.app_server.services.injector import InjectorState
+from openhands.app_server.user.specifiy_user_context import USER_CONTEXT_ATTR
+from openhands.app_server.user.user_context import UserContext, UserContextInjector
+from openhands.app_server.user.user_models import UserInfo
+from openhands.app_server.user_auth.user_auth import UserAuth, get_user_auth
 from openhands.sdk.secret import SecretSource, StaticSecret
-from openhands.server.user_auth.user_auth import UserAuth, get_user_auth
 
 USER_AUTH_ATTR = 'user_auth'
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -35,6 +39,9 @@ class AuthUserContext(UserContext):
         user_id = await self.user_auth.get_user_id()
         return user_id
 
+    async def get_user_email(self) -> str | None:
+        return await self.user_auth.get_user_email()
+
     async def get_user_info(self) -> UserInfo:
         user_info = self._user_info
         if user_info is None:
@@ -48,14 +55,49 @@ class AuthUserContext(UserContext):
             self._user_info = user_info
         return user_info
 
-    async def get_provider_tokens(self) -> PROVIDER_TOKEN_TYPE | None:
-        return await self.user_auth.get_provider_tokens()
+    async def get_provider_tokens(
+        self, as_env_vars: bool = False
+    ) -> PROVIDER_TOKEN_TYPE | dict[str, str] | None:
+        """Return provider tokens.
+
+        Args:
+            as_env_vars: When True, return a ``dict[str, str]`` mapping env
+                var names (e.g. ``github_token``) to plain-text token values,
+                resolving the latest value at call time.  When False (default),
+                return the raw ``dict[ProviderType, ProviderToken]``.
+        """
+        provider_tokens = await self.user_auth.get_provider_tokens()
+        if not as_env_vars:
+            return provider_tokens
+        results: dict[str, str] = {}
+        if provider_tokens:
+            for provider_type, provider_token in provider_tokens.items():
+                env_key = ProviderHandler.get_provider_env_key(provider_type)
+                latest_token = None
+                if provider_type == ProviderType.AZURE_DEVOPS:
+                    try:
+                        latest_token = await self.get_latest_token(provider_type)
+                    except Exception as exc:
+                        _logger.warning(
+                            'Failed to refresh provider token for %s: %s',
+                            provider_type.value,
+                            exc,
+                        )
+                if latest_token:
+                    results[env_key] = latest_token
+                elif provider_token.token:
+                    token_value = provider_token.token.get_secret_value()
+                    if token_value:
+                        results[env_key] = token_value
+        return results
 
     async def get_provider_handler(self):
         provider_handler = self._provider_handler
         if not provider_handler:
             provider_tokens = await self.user_auth.get_provider_tokens()
             assert provider_tokens is not None
+            if not isinstance(provider_tokens, MappingProxyType):
+                provider_tokens = MappingProxyType(provider_tokens)
             user_id = await self.get_user_id()
             provider_handler = ProviderHandler(
                 provider_tokens=provider_tokens, external_auth_id=user_id
@@ -76,12 +118,14 @@ class AuthUserContext(UserContext):
         provider_handler = await self.get_provider_handler()
         service = provider_handler.get_service(provider_type)
         token = await service.get_latest_token()
+        if isinstance(token, SecretStr):
+            return token.get_secret_value()
         return token
 
     async def get_secrets(self) -> dict[str, SecretSource]:
-        results = {}
+        results: dict[str, SecretSource] = {}
 
-        # Include custom secrets...
+        # Include custom secrets (includes OPENHANDS_API_KEY in SaaS mode)
         secrets = await self.user_auth.get_secrets()
         if secrets:
             for name, custom_secret in secrets.custom_secrets.items():
@@ -97,6 +141,9 @@ class AuthUserContext(UserContext):
     async def get_mcp_api_key(self) -> str | None:
         mcp_api_key = await self.user_auth.get_mcp_api_key()
         return mcp_api_key
+
+    async def get_user_git_info(self) -> UserGitInfo | None:
+        return await self.user_auth.get_user_git_info()
 
 
 USER_ID_ATTR = 'user_id'

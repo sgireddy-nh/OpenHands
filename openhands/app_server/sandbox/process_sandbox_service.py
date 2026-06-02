@@ -10,6 +10,7 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -134,22 +135,22 @@ class ProcessSandboxService(SandboxService):
         )
 
         try:
-            # Start the process
-            process = subprocess.Popen(
-                cmd,
-                env=env,
-                cwd=working_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+            # Start the process, directing output to a log file to avoid pipe-buffer deadlocks
+            log_path = os.path.join(working_dir, '.openhands-agent-server.log')
+            with open(log_path, 'a', buffering=1) as log_handle:
+                process = subprocess.Popen(
+                    cmd, env=env, cwd=working_dir, stdout=log_handle, stderr=log_handle
+                )
 
             # Wait a moment for the process to start
             await asyncio.sleep(1)
 
             # Check if process is still running
             if process.poll() is not None:
-                stdout, stderr = process.communicate()
-                raise SandboxError(f'Agent process failed to start: {stderr.decode()}')
+                raise SandboxError(
+                    f'Agent process failed to start (exit code {process.returncode}). '
+                    f'See {log_path} for details.'
+                )
 
             return process
 
@@ -180,12 +181,15 @@ class ProcessSandboxService(SandboxService):
             process = psutil.Process(process_info.pid)
             if process.is_running():
                 status = process.status()
-                if status == psutil.STATUS_RUNNING:
-                    return SandboxStatus.RUNNING
-                elif status == psutil.STATUS_STOPPED:
+                if status == psutil.STATUS_STOPPED:
                     return SandboxStatus.PAUSED
+                elif status in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD):
+                    return SandboxStatus.MISSING
                 else:
-                    return SandboxStatus.STARTING
+                    # RUNNING covers psutil 'running' AND 'sleeping' (typical for
+                    # an asyncio uvicorn process waiting on epoll). The /alive
+                    # check in _process_to_sandbox_info verifies real readiness.
+                    return SandboxStatus.RUNNING
             else:
                 return SandboxStatus.MISSING
         except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -412,11 +416,13 @@ class ProcessSandboxServiceInjector(SandboxServiceInjector):
     """Dependency injector for process sandbox services."""
 
     base_working_dir: str = Field(
-        default='/tmp/openhands-sandboxes',
+        default_factory=lambda: os.path.join(
+            tempfile.gettempdir(), 'openhands-sandboxes'
+        ),
         description='Base directory for sandbox working directories',
     )
     base_port: int = Field(
-        default=8000, description='Base port number for agent servers'
+        default=18000, description='Base port number for agent servers'
     )
     python_executable: str = Field(
         default=sys.executable,

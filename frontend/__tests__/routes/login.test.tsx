@@ -51,12 +51,6 @@ vi.mock("#/hooks/use-auth-url", () => ({
     useAuthUrlMock(config),
 }));
 
-vi.mock("#/hooks/use-tracking", () => ({
-  useTracking: () => ({
-    trackLoginButtonClick: vi.fn(),
-  }),
-}));
-
 const { useInvitationMock, buildOAuthStateDataMock } = vi.hoisted(() => ({
   useInvitationMock: vi.fn(() => ({
     invitationToken: null as string | null,
@@ -71,6 +65,20 @@ const { useInvitationMock, buildOAuthStateDataMock } = vi.hoisted(() => ({
 
 vi.mock("#/hooks/use-invitation", () => ({
   useInvitation: () => useInvitationMock(),
+}));
+
+// Mock useAppMode hook - enable CTA by default (SaaS Cloud mode)
+vi.mock("#/hooks/use-app-mode", () => ({
+  useAppMode: () => ({
+    isOss: false,
+    isSaas: true,
+    isCloud: true,
+    isSelfHosted: false,
+    isEnterpriseSelfHosted: false,
+    isEnterpriseCloud: true,
+    appMode: "saas",
+    deploymentMode: "cloud",
+  }),
 }));
 
 const RouterStub = createRoutesStub([
@@ -141,6 +149,7 @@ describe("LoginPage", () => {
         hide_users_page: false,
         hide_billing_page: false,
         hide_integrations_page: false,
+        enable_onboarding: false,
       },
     });
 
@@ -208,6 +217,7 @@ describe("LoginPage", () => {
           hide_users_page: false,
           hide_billing_page: false,
           hide_integrations_page: false,
+        enable_onboarding: false,
         },
       });
 
@@ -247,6 +257,7 @@ describe("LoginPage", () => {
           hide_users_page: false,
           hide_billing_page: false,
           hide_integrations_page: false,
+        enable_onboarding: false,
         },
       });
 
@@ -410,6 +421,7 @@ describe("LoginPage", () => {
           hide_users_page: false,
           hide_billing_page: false,
           hide_integrations_page: false,
+        enable_onboarding: false,
         },
       });
 
